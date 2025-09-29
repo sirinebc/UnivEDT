@@ -6,7 +6,7 @@ import 'ui/calendar_base.dart';
 import 'ui/forms/new_calendar_form.dart';
 import 'utils.dart';
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 void main() => runApp(const MyApp());
 
@@ -44,6 +44,8 @@ class _HomeScreenState extends State<HomeScreen> {
   late ScrollController _dayViewScrollController;
   List<MyCalendar> calendars = [];
 
+  final _secureStorage = const FlutterSecureStorage();
+
   void _reloadURLs() async {
   setState(() => isLoading = true);
   
@@ -57,19 +59,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
 Future<void> _reloadCached() async {
   setState(() => isLoading = true);
-  final prefs = await SharedPreferences.getInstance();
-  final calendarsJson = prefs.getStringList('cached_calendars') ?? [];
 
-  calendars = calendarsJson.map((c) => MyCalendar.fromJson(json.decode(c))).toList();
+  final cached = await loadCalendarsFromCache();
+  calendars = cached;
 
   for (final calendar in calendars.where((c) => c.url.isNotEmpty)) {
-    try {
-      calendar.events = await IcsParser.parseFromUrl(calendar.url);
-    } catch (e) {
-      debugPrint('Failed to load ${calendar.name}: $e');
-      calendar.events = [];
+      if (!isValidIcsUrl(calendar.url)) {
+        debugPrint('URL denied: ${calendar.url}');
+        continue;
+      }
+
+      try {
+        final icsData = await IcsParser.parseFromUrl(calendar.url);
+
+        calendar.events = icsData;
+      } catch (e) {
+        debugPrint('Load error ${calendar.name}: $e');
+        calendar.events = [];
+      }
     }
-  }
 
   setState(() => isLoading = false);
 }
@@ -95,21 +103,21 @@ Future<void> _loadInitialData() async {
   }
 }
 
-
-  Future<void> saveCalendarsToCache(List<MyCalendar> calendars) async {
-  final prefs = await SharedPreferences.getInstance();
-  final calendarsJson = calendars.map((c) => json.encode(c.toJson())).toList();
-  await prefs.setStringList('cached_calendars', calendarsJson);
-}
-
-  Future<List<MyCalendar>> loadCalendarsFromCache() async {
-    final prefs = await SharedPreferences.getInstance();
-    final calendarsJson = prefs.getStringList('cached_calendars') ?? [];
-    return calendarsJson
-        .map((c) => MyCalendar.fromJson(json.decode(c)))
-        .toList();
+Future<void> saveCalendarsToCache(List<MyCalendar> calendars) async {
+    final calendarsJson = calendars.map((c) => json.encode(c.toJson())).toList();
+    await _secureStorage.write(
+      key: 'cached_calendars',
+      value: jsonEncode(calendarsJson),
+    );
   }
 
+  Future<List<MyCalendar>> loadCalendarsFromCache() async {
+    final cached = await _secureStorage.read(key: 'cached_calendars');
+    if (cached == null || cached.isEmpty) return [];
+
+    final calendarsJson = (jsonDecode(cached) as List<dynamic>).cast<String>();
+    return calendarsJson.map((c) => MyCalendar.fromJson(json.decode(c))).toList();
+  }
 
   void _scrollToFirstEvent() {
     WidgetsBinding.instance.addPostFrameCallback((_) {

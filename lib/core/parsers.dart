@@ -3,15 +3,42 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'models.dart';
 import 'dart:math';
+import 'dart:io';
+import 'dart:async';
 
 class IcsParser {
   static final Random _random = Random();
+
   static Future<List<MyEvent>> parseFromUrl(String url) async {
-    final response = await http.get(Uri.parse(url));
-    if (response.statusCode != 200) {
-      throw Exception('Failed to load calendar');
+    final uri = Uri.parse(url);
+
+    try {
+      final response = await http
+      .get(Uri.parse(url))
+      .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load calendar');
+      }
+
+      final body = response.body;
+
+      if (body.length > 5 * 1024 * 1024) {
+        throw Exception('ICS too large (>5MB)');
+      }
+
+      if (!isValidICS(body)) {
+        throw Exception('Invalid ICS content');
+      }
+
+      return parseIcs(body);
+    } on TimeoutException catch (e) {
+      throw Exception('Error : $e');
+    } on SocketException catch (_) {
+      throw Exception('No network connection');
+    } catch (e) {
+      rethrow; 
     }
-    return parseIcs(response.body);
   }
 
   static List<MyEvent> parseIcs(String icsContent) {
